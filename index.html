@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="A tiny PWA installation and notification test.">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <title>PWA Notification Tester</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: #f3f4f6; color: #111827; }
+    main { box-sizing: border-box; width: min(100% - 32px, 560px); margin: 48px auto; padding: 28px; background: white; border-radius: 18px; box-shadow: 0 8px 30px #00000012; }
+    h1 { margin: 0 0 8px; font-size: 1.7rem; }
+    p { color: #4b5563; line-height: 1.5; }
+    .status { padding: 12px 14px; margin: 12px 0; border-radius: 10px; background: #f3f4f6; overflow-wrap: anywhere; }
+    .status strong { display: inline-block; min-width: 145px; color: #111827; }
+    button { display: block; width: 100%; margin: 12px 0; padding: 14px 16px; border: 0; border-radius: 10px; background: #2563eb; color: white; font-size: 1rem; font-weight: 650; cursor: pointer; }
+    button.secondary { background: #374151; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    #log { max-height: 180px; overflow: auto; padding-left: 20px; color: #4b5563; font-size: .9rem; }
+    .note { font-size: .85rem; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111827; color: #f9fafb; }
+      main { background: #1f2937; }
+      p, #log { color: #d1d5db; }
+      .status { background: #374151; }
+      .status strong { color: #f9fafb; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>PWA Notification Tester</h1>
+  <p>A small, backend-free test for PWA installation and local notifications.</p>
+
+  <div class="status"><strong>Environment</strong> <span id="environment">Checking…</span></div>
+  <div class="status"><strong>Installation</strong> <span id="installation">Checking…</span></div>
+  <div class="status"><strong>Permission</strong> <span id="permission">Checking…</span></div>
+  <div class="status"><strong>Service worker</strong> <span id="worker">Checking…</span></div>
+
+  <button id="install" hidden>Install this app</button>
+  <button id="enable">Enable notifications</button>
+  <button id="notify" class="secondary" disabled>Send test notification</button>
+
+  <p class="note">
+    This demo displays a notification on this device when you press the button.
+    It does not send remote push messages and cannot notify you from another device
+    or while this page is not running.
+  </p>
+
+  <h2>Activity log</h2>
+  <ul id="log"><li>Page loaded.</li></ul>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const log = (message) => {
+    const item = document.createElement('li');
+    item.textContent = `${new Date().toLocaleTimeString()} — ${message}`;
+    $('log').prepend(item);
+  };
+
+  let registration = null;
+  let installPrompt = null;
+
+  const isStandalone = () =>
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true;
+
+  function updateStatus() {
+    $('environment').textContent = `${location.protocol} ${navigator.userAgent.match(/Android|iPhone|iPad|iPod/)?.[0] || 'Desktop/other'}`;
+    $('installation').textContent = isStandalone() ? 'Running as installed app' : 'Running in browser';
+    $('permission').textContent = ('Notification' in window) ? Notification.permission : 'Not supported';
+    $('notify').disabled = !registration || !('Notification' in window) || Notification.permission !== 'granted';
+  }
+
+  async function init() {
+    if (!('serviceWorker' in navigator)) {
+      $('worker').textContent = 'Not supported';
+      log('Service Workers are not supported in this browser.');
+      updateStatus();
+      return;
+    }
+
+    try {
+      registration = await navigator.serviceWorker.register('./sw.js');
+      await navigator.serviceWorker.ready;
+      $('worker').textContent = 'Registered';
+      log('Service Worker registered.');
+    } catch (error) {
+      $('worker').textContent = 'Registration failed';
+      log(`Service Worker error: ${error.message}`);
+    }
+    updateStatus();
+  }
+
+  $('enable').addEventListener('click', async () => {
+    if (!('Notification' in window)) {
+      log('Notifications are not supported in this browser.');
+      return;
+    }
+    try {
+      const result = await Notification.requestPermission();
+      log(`Notification permission: ${result}`);
+      updateStatus();
+      if (result === 'granted' && registration) {
+        $('notify').disabled = false;
+      }
+    } catch (error) {
+      log(`Permission request failed: ${error.message}`);
+    }
+  });
+
+  $('notify').addEventListener('click', async () => {
+    if (!registration || Notification.permission !== 'granted') return;
+    try {
+      await registration.showNotification('Hello from your PWA!', {
+        body: 'Your test notification is working 🎉',
+        tag: 'pwa-notification-test',
+        icon: './icon-192.png',
+        badge: './icon-192.png',
+        data: { url: './' }
+      });
+      log('Test notification requested from this device.');
+    } catch (error) {
+      log(`Could not show notification: ${error.message}`);
+    }
+  });
+
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault();
+    installPrompt = event;
+    $('install').hidden = false;
+    log('Browser says this app can be installed.');
+  });
+
+  $('install').addEventListener('click', async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    log(`Install prompt result: ${choice.outcome}`);
+    installPrompt = null;
+    $('install').hidden = true;
+  });
+
+  window.addEventListener('appinstalled', () => {
+    log('Browser reported that the PWA was installed.');
+    updateStatus();
+  });
+
+  window.matchMedia('(display-mode: standalone)').addEventListener?.('change', updateStatus);
+  init();
+  updateStatus();
+})();
+</script>
+</body>
+</html>
